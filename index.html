@@ -144,7 +144,7 @@
             overflow: hidden;
         }
 
-        /* Vista Modo TV en Vivo */
+        /* Vista Modo Reproductor */
         .tv-view {
             width: 100%;
             height: 100%;
@@ -163,10 +163,19 @@
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.8);
         }
 
-        video {
+        video, iframe {
             width: 100%;
             height: 100%;
+            border: none;
+        }
+
+        video {
             object-fit: contain;
+        }
+
+        iframe {
+            display: none;
+            background: #000;
         }
 
         .player-footer {
@@ -182,6 +191,10 @@
             font-size: 18px;
             font-weight: 700;
             color: var(--glow-blue);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            max-width: 70%;
         }
 
         .btn-fullscreen {
@@ -348,11 +361,14 @@
             <button class="menu-btn" id="nav-series" onclick="switchTab('series')" tabindex="0">🍿 Series</button>
         </nav>
 
-        <!-- CENTRO: REPRODUCTOR O GRILLA VOD -->
+        <!-- CENTRO: REPRODUCTOR HÍBRIDO O GRILLA VOD -->
         <main class="center-stage">
             <div id="tvView" class="tv-view">
                 <div class="video-wrapper" id="videoWrapper">
+                    <!-- Reproductor Nativo HLS/MP4 -->
                     <video id="mainPlayer" controls autoplay playsinline crossorigin="anonymous"></video>
+                    <!-- Reproductor Web/Embed (voe.sx, etc.) -->
+                    <iframe id="embedPlayer" allowfullscreen allow="autoplay; encrypted-media; fullscreen" referrerpolicy="no-referrer"></iframe>
                 </div>
                 <div class="player-footer">
                     <span class="now-playing-title" id="nowPlayingTitle">Seleccioná un canal de la derecha</span>
@@ -375,7 +391,6 @@
 
     <script>
         // ================= CONFIGURACIÓN DE TUS LISTAS RAW =================
-        // Aquí agregas los enlaces RAW directamente de tus archivos en GitHub:
         const URL_TV = "https://raw.githubusercontent.com/germgomezz88-dev/Jambatv/refs/heads/main/ListaJAMBA";
         const URL_PELICULAS = ""; // <--- Aquí pondrás el enlace RAW de películas cuando lo crees
         const URL_SERIES = "";    // <--- Aquí pondrás el enlace RAW de series cuando lo crees
@@ -387,6 +402,7 @@
         let currentTab = 'tv';
 
         const videoElement = document.getElementById('mainPlayer');
+        const embedElement = document.getElementById('embedPlayer');
         const channelListEl = document.getElementById('channelList');
         const tvStatusEl = document.getElementById('tvStatus');
         const vodGridEl = document.getElementById('vodGrid');
@@ -570,9 +586,26 @@
             }
         }
 
+        // Detector inteligente: decide si usar iframe (voe.sx, embeds) o video nativo
+        function isEmbedUrl(url) {
+            const lower = url.toLowerCase();
+            return (
+                lower.includes('voe.sx') ||
+                lower.includes('/e/') ||
+                lower.includes('/embed/') ||
+                lower.includes('filemoon') ||
+                lower.includes('streamwish') ||
+                lower.includes('dood') ||
+                lower.includes('mixdrop') ||
+                lower.includes('ok.ru') ||
+                lower.includes('youtube.com') ||
+                lower.includes('youtu.be')
+            );
+        }
+
         function getFormattedUrl(url, useProxy = false) {
             let target = url.trim();
-            if (target.match(/\.(mp4|mkv|avi|mov)(\?.*)?$/i)) {
+            if (target.match(/\.(mp4|mkv|avi|mov|webm)(\?.*)?$/i)) {
                 return useProxy ? "https://corsproxy.io/?" + encodeURIComponent(target) : target;
             }
             if (target.endsWith('.ts')) {
@@ -584,6 +617,20 @@
             return useProxy ? "https://corsproxy.io/?" + encodeURIComponent(target) : target;
         }
 
+        function stopAllPlayers() {
+            if (hlsInstance) {
+                hlsInstance.destroy();
+                hlsInstance = null;
+            }
+            if (stallCheckInterval) {
+                clearInterval(stallCheckInterval);
+            }
+            videoElement.pause();
+            videoElement.removeAttribute('src');
+            videoElement.load();
+            embedElement.src = 'about:blank';
+        }
+
         function playStream(url, title, activeIndex, forceProxy = false) {
             if (!url) return;
 
@@ -592,15 +639,30 @@
                 el.classList.toggle('playing', i === activeIndex);
             });
 
-            currentRawUrl = url;
+            stopAllPlayers();
+            currentRawUrl = url.trim();
+
+            // MODO 1: Enlaces tipo voe.sx / Embed Web -> Abre en IFRAME
+            if (isEmbedUrl(currentRawUrl)) {
+                videoElement.style.display = 'none';
+                embedElement.style.display = 'block';
+                
+                // Si pusieron un link de voe.sx sin /e/, lo convierte automáticamente a embed
+                let embedLink = currentRawUrl;
+                if (embedLink.includes('voe.sx/') && !embedLink.includes('/e/')) {
+                    embedLink = embedLink.replace('voe.sx/', 'voe.sx/e/');
+                }
+                
+                embedElement.src = embedLink;
+                return;
+            }
+
+            // MODO 2: Enlaces Directos / HLS -> Abre en VIDEO NATIVO
+            embedElement.style.display = 'none';
+            videoElement.style.display = 'block';
+
             isUsingProxyFallback = forceProxy;
             const streamToLoad = getFormattedUrl(currentRawUrl, isUsingProxyFallback);
-
-            if (hlsInstance) {
-                hlsInstance.destroy();
-                hlsInstance = null;
-            }
-            if (stallCheckInterval) clearInterval(stallCheckInterval);
 
             if (streamToLoad.match(/\.(mp4|mkv|webm)(\?.*)?$/i)) {
                 videoElement.src = streamToLoad;
@@ -668,6 +730,7 @@
             }, 500);
         }
 
+        // Navegación espacial con flechas del control remoto Samsung
         document.addEventListener('keydown', (e) => {
             if (document.activeElement === searchInput && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
                 return;
